@@ -191,50 +191,13 @@ Sysdig API token used to sync the PROD email-alert set on every merge. Sourced f
 * Reference: `${{ secrets.SYSDIG_API_TOKEN }}`
 * Alert templates live in [`monitoring/alerts/`](./monitoring/alerts/). Add or remove files to customize the alert set per app — see [`bcgov/action-sysdig-monitor`](https://github.com/bcgov/action-sysdig-monitor) for the template schema and placeholder vocabulary.
 
-**`TLS_CERTIFICATE`, `TLS_PRIVATE_KEY`, `TLS_CA_CERTIFICATE`**
+**`ROUTE_HOST` (vanity URL certificate)**
 
-PEM-formatted certificates and private key for custom vanity URL TLS on the PROD frontend OpenShift Route. Optional — required only when `vars.ROUTE_HOST` is configured.
-* References: `${{ secrets.TLS_CERTIFICATE }}`, `${{ secrets.TLS_PRIVATE_KEY }}`, `${{ secrets.TLS_CA_CERTIFICATE }}`
-* Validated and applied on-demand via the standalone [`.github/workflows/route-tls.yml`](./.github/workflows/route-tls.yml) workflow using [`bcgov/actions-openshift/route-tls`](https://github.com/bcgov/actions-openshift/tree/main/route-tls), which checks key matching, CA chain, expiration, and archives previous certificates to an OpenShift secret.
-* Store these as `prod` environment secrets (not repository secrets), and configure the `prod` environment's deployment branches and tags to restrict access (e.g. to `main` or release tags); environment scoping alone does not prevent a pull-request job from requesting these secrets.
-* Do not pass PEMs or private keys as `workflow_dispatch` inputs—dispatch inputs are recorded in plaintext in workflow run logs. Rotation is handled by updating the `prod` secrets and triggering the `Route TLS` workflow with `dry_run=true` to validate, then `dry_run=false` to apply.
+Vanity URL hostname for the application (e.g., `myapp.gov.bc.ca` — hostname only, no scheme). Optional repository variable. While it is unset, the standalone `Cert Keeper` workflow ([`cert-keeper.yml`](./.github/workflows/cert-keeper.yml)) does nothing.
 
-When receiving a certificate package from Entrust, map the files to GitHub secrets as follows:
-
-| Secret | File in package | Notes |
-| --- | --- | --- |
-| `TLS_CERTIFICATE` | `<host>.pem` | Leaf certificate only (CN/SAN matches hostname). |
-| `TLS_PRIVATE_KEY` | `<host>.key` | Unencrypted private key (`BEGIN PRIVATE KEY`). Never commit this. |
-| `TLS_CA_CERTIFICATE` | `Entrust OV TLS Issuing RSA CA 2.pem` | Issuing intermediate CA only (one PEM). |
-
-Leave out root certificates (e.g. `Sectigo Public Server Authentication Root R46.pem` or `USERTrust RSA Certification Authority.pem`) because clients already have them in their trust stores. Omit `<host>.csr` (the signing request is finished).
-
-Upload these secrets to the `prod` environment via GitHub CLI:
-
-```bash
-CERT_HOST='myapp.gov.bc.ca' # Replace with the certificate filename prefix
-gh secret set TLS_CERTIFICATE --env prod < "${CERT_HOST}.pem"
-gh secret set TLS_PRIVATE_KEY --env prod < "${CERT_HOST}.key"
-gh secret set TLS_CA_CERTIFICATE --env prod < 'Entrust OV TLS Issuing RSA CA 2.pem'
-```
-
-**`ROUTE_HOST`**
-
-Vanity URL hostname for the application (e.g., `myapp.gov.bc.ca` — hostname only, no scheme). Optional — can be set as a repository variable or environment variable on `prod`. When set, the standalone `Route TLS` workflow (`.github/workflows/route-tls.yml`) configures an OpenShift Route with custom TLS for the frontend service.
 * Reference: `${{ vars.ROUTE_HOST }}`
-* Set as a repository variable: `gh variable set ROUTE_HOST --body 'myapp.gov.bc.ca'` (or `Settings > Secrets and variables > Actions > Variables`). The `Cert Expiry` check reads only the repository variable.
-
-Two standalone workflows use it:
-
-* `Route TLS` ([`route-tls.yml`](./.github/workflows/route-tls.yml)) validates (`dry_run=true`) or applies (`dry_run=false`) the PROD vanity Route certificate. Manual only.
-* `Cert Expiry` ([`cert-expiry.yml`](./.github/workflows/cert-expiry.yml)) checks the `ROUTE_HOST` certificate and notifies CODEOWNERS if it expires within 30 days or can't be read. Runs weekly (Monday) or by hand, only when `ROUTE_HOST` is set.
-
-Run either by hand from `Actions > <workflow> > Run workflow`, or:
-
-```bash
-gh workflow run route-tls.yml -f dry_run=true
-gh workflow run cert-expiry.yml
-```
+* Set as a repository variable: `gh variable set ROUTE_HOST --body 'myapp.gov.bc.ca'`. The workflow checks `ROUTE_HOST` at job level, so it must be a repository variable, not an environment-only variable.
+* Once `ROUTE_HOST` is set, `Cert Keeper` runs daily and on-demand (`workflow_dispatch`) to keep a [Let's Encrypt](https://letsencrypt.org/) certificate valid on `<repo>-vanity-url` pointing to `<repo>-prod-frontend` (or pass `tls_certificate` / `tls_private_key` / `tls_ca_certificate` if using pre-supplied certificates). See the [cert-keeper README](https://github.com/bcgov/actions-openshift/blob/main/cert-keeper/README.md#add-a-host-step-by-step).
 
 **`S3_BUCKET`, `S3_ENDPOINT`, `S3_USER`, `S3_PASSWORD` (Automated Offsite Backups)**
 
